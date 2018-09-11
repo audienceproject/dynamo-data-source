@@ -20,10 +20,12 @@
   */
 package com.audienceproject.spark.dynamodb.connector
 
+import com.amazonaws.services.applicationautoscaling.{AWSApplicationAutoScalingClient, AWSApplicationAutoScalingClientBuilder}
 import com.amazonaws.services.dynamodbv2.document._
 import com.amazonaws.services.dynamodbv2.document.spec.{BatchWriteItemSpec, ScanSpec}
 import com.amazonaws.services.dynamodbv2.model.ReturnConsumedCapacity
 import com.amazonaws.services.dynamodbv2.xspec.ExpressionSpecBuilder
+import com.amazonaws.services.applicationautoscaling.model._
 import com.google.common.util.concurrent.RateLimiter
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.sources.Filter
@@ -56,8 +58,20 @@ private[dynamodb] class TableConnector(tableName: String, totalSegments: Int, pa
         val readCapacity = desc.getProvisionedThroughput.getReadCapacityUnits * targetCapacity
         val writeCapacity = desc.getProvisionedThroughput.getWriteCapacityUnits * targetCapacity
 
-        val readLimit = (readCapacity / totalSegments).toInt max 1
-        val itemLimit = (bytesPerRCU / avgItemSize * readLimit).toInt * readFactor
+        var readLimit = (readCapacity / totalSegments).toInt max 1
+        var itemLimit = (bytesPerRCU / avgItemSize * readLimit).toInt * readFactor
+
+        if (itemLimit == 0) {
+            val aaClient: AWSApplicationAutoScalingClient = AWSApplicationAutoScalingClientBuilder.standard().build().asInstanceOf[AWSApplicationAutoScalingClient]
+            val dscRequest: DescribeScalableTargetsRequest = new DescribeScalableTargetsRequest()
+                .withServiceNamespace(ServiceNamespace.Dynamodb)
+                .withScalableDimension(ScalableDimension.DynamodbTableReadCapacityUnits)
+                .withResourceIds(s"table/${desc.getTableName}")
+            val dsaResult: DescribeScalableTargetsResult = aaClient.describeScalableTargets(dscRequest)
+            val newReadCapacity = dsaResult.getScalableTargets.asScala.headOption.getOrElse[ScalableTarget](new ScalableTarget().withMaxCapacity(desc.getProvisionedThroughput.getReadCapacityUnits.toInt)).getMaxCapacity * targetCapacity
+            readLimit = (newReadCapacity / totalSegments).toInt max 1
+            itemLimit = (bytesPerRCU / avgItemSize * readLimit).toInt * readFactor
+        }
 
         val writeLimit = (writeCapacity / totalSegments).toInt
 
