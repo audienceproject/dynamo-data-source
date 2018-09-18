@@ -35,7 +35,7 @@ private[dynamodb] class TableIndexConnector(tableName: String, indexName: String
     private val filterPushdown = parameters.getOrElse("filterPushdown", "true").toBoolean
 
     override val (keySchema, readLimit, itemLimit, totalSizeInBytes) = {
-        val table = getClient.getTable(tableName)
+        val table = getDynamoDB.getTable(tableName)
         val indexDesc = table.describe().getGlobalSecondaryIndexes.asScala.find(_.getIndexName == indexName).get
 
         // Key schema.
@@ -75,7 +75,7 @@ private[dynamodb] class TableIndexConnector(tableName: String, indexName: String
             scanSpec.withExpressionSpec(xspec.buildForScan())
         }
 
-        getClient.getTable(tableName).getIndex(indexName).scan(scanSpec)
+        getDynamoDB.getTable(tableName).getIndex(indexName).scan(scanSpec)
     }
 
 }

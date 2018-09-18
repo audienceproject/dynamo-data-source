@@ -22,7 +22,7 @@ package com.audienceproject.spark.dynamodb.connector
 
 import com.amazonaws.services.dynamodbv2.document._
 import com.amazonaws.services.dynamodbv2.document.spec.{BatchWriteItemSpec, ScanSpec}
-import com.amazonaws.services.dynamodbv2.model.ReturnConsumedCapacity
+import com.amazonaws.services.dynamodbv2.model.{AttributeValue, ReturnConsumedCapacity, UpdateItemRequest, UpdateItemResult}
 import com.amazonaws.services.dynamodbv2.xspec.ExpressionSpecBuilder
 import com.google.common.util.concurrent.RateLimiter
 import org.apache.spark.sql.Row
@@ -33,13 +33,13 @@ import scala.annotation.tailrec
 import scala.collection.JavaConverters._
 
 private[dynamodb] class TableConnector(tableName: String, totalSegments: Int, parameters: Map[String, String])
-    extends DynamoConnector with DynamoWritable with Serializable {
+    extends DynamoConnector with DynamoWritable with DynamoUpdatable with Serializable {
 
     private val consistentRead = parameters.getOrElse("stronglyConsistentReads", "false").toBoolean
     private val filterPushdown = parameters.getOrElse("filterPushdown", "true").toBoolean
 
     override val (keySchema, readLimit, writeLimit, itemLimit, totalSizeInBytes) = {
-        val table = getClient.getTable(tableName)
+        val table = getDynamoDB.getTable(tableName)
         val desc = table.describe()
 
         // Key schema.
@@ -82,7 +82,47 @@ private[dynamodb] class TableConnector(tableName: String, totalSegments: Int, pa
             scanSpec.withExpressionSpec(xspec.buildForScan())
         }
 
-        getClient.getTable(tableName).scan(scanSpec)
+        getDynamoDB.getTable(tableName).scan(scanSpec)
+    }
+
+    override def updateItems(schema: StructType)(items: Iterator[Row]): Unit = {
+        val columnNames = schema.map(_.name)
+        val hashKeyIndex = columnNames.indexOf(keySchema.hashKeyName)
+        val rangeKeyIndex = keySchema.rangeKeyName.map(columnNames.indexOf)
+        val columnIndices = columnNames.zipWithIndex.filterNot({
+            case (name, _) => keySchema match {
+                case KeySchema(hashKey, None) => name == hashKey
+                case KeySchema(hashKey, Some(rangeKey)) => name == hashKey || name == rangeKey
+            }
+        })
+
+        val rateLimiter = RateLimiter.create(writeLimit max 1)
+        val client = getDynamoDBClient
+
+        val updateExpression = s"SET ${columnIndices.map(c => s"${c._1}=:${c._1}").mkString(", ")}"
+
+        // For each item.
+        items.foreach(row => {
+            val key:Map[String,AttributeValue] = keySchema match {
+                case KeySchema(hashKey, None) => Map(hashKey ->  mapValueToAttributeValue(row(hashKeyIndex), schema(hashKey).dataType))
+                case KeySchema(hashKey, Some(rangeKey)) =>
+                    Map(hashKey ->  mapValueToAttributeValue(row(hashKeyIndex), schema(hashKey).dataType),
+                        rangeKey-> mapValueToAttributeValue(row(rangeKeyIndex.get), schema(rangeKey).dataType))
+
+            }
+
+            val expressionAttributeValues = columnIndices.map(c => s":${c._1}" -> mapValueToAttributeValue(row(c._2), schema(c._1).dataType)).toMap.asJava
+            val updateItemReq = new UpdateItemRequest()
+                .withReturnConsumedCapacity(ReturnConsumedCapacity.TOTAL)
+              .withTableName(tableName)
+              .withKey(key.asJava)
+              .withUpdateExpression(updateExpression)
+              .withExpressionAttributeValues(expressionAttributeValues)
+
+            val updateItemResult = client.updateItem(updateItemReq)
+
+            handleUpdateItemResult(rateLimiter)(updateItemResult)
+        })
     }
 
     override def putItems(schema: StructType, batchSize: Int)(items: Iterator[Row]): Unit = {
@@ -97,7 +137,7 @@ private[dynamodb] class TableConnector(tableName: String, totalSegments: Int, pa
         })
 
         val rateLimiter = RateLimiter.create(writeLimit max 1)
-        val client = getClient
+        val client = getDynamoDB
 
         // For each batch.
         items.grouped(batchSize).foreach(itemBatch => {
@@ -147,6 +187,26 @@ private[dynamodb] class TableConnector(tableName: String, totalSegments: Int, pa
         }
     }
 
+    private def mapValueToAttributeValue(element: Any, elementType: DataType): AttributeValue = {
+        elementType match {
+            case ArrayType(innerType, _) => new AttributeValue().withL(element.asInstanceOf[Seq[_]].map(e => mapValueToAttributeValue(e, innerType)):_*)
+            case MapType(keyType, valueType, _) =>
+                if (keyType != StringType) throw new IllegalArgumentException(
+                    s"Invalid Map key type '${keyType.typeName}'. DynamoDB only supports String as Map key type.")
+
+                new AttributeValue().withM(element.asInstanceOf[Map[String, _]].mapValues(e => mapValueToAttributeValue(e, valueType)).asJava)
+
+            case StructType(fields) =>
+                val row = element.asInstanceOf[Row]
+                new AttributeValue().withM( (fields.indices map { i =>
+                    fields(i).name -> mapValueToAttributeValue(row(i), fields(i).dataType)
+                }).toMap.asJava)
+            case StringType => new AttributeValue().withS(element.asInstanceOf[String])
+            case LongType | IntegerType | DoubleType | FloatType => new AttributeValue().withN(element.toString)
+            case BooleanType => new AttributeValue().withBOOL(element.asInstanceOf[Boolean])
+        }
+    }
+
     @tailrec
     private def handleBatchWriteResponse(client: DynamoDB, rateLimiter: RateLimiter)
                                         (response: BatchWriteItemOutcome): Unit = {
@@ -160,6 +220,13 @@ private[dynamodb] class TableConnector(tableName: String, totalSegments: Int, pa
         if (response.getUnprocessedItems != null && !response.getUnprocessedItems.isEmpty) {
             val newResponse = client.batchWriteItemUnprocessed(response.getUnprocessedItems)
             handleBatchWriteResponse(client, rateLimiter)(newResponse)
+        }
+    }
+    private def handleUpdateItemResult(rateLimiter: RateLimiter)
+                                        (result: UpdateItemResult): Unit = {
+        // Rate limit on write capacity.
+        if (result.getConsumedCapacity != null) {
+            rateLimiter.acquire(result.getConsumedCapacity.getCapacityUnits.toInt)
         }
     }
 
