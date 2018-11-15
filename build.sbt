@@ -13,6 +13,8 @@ crossScalaVersions := Seq("2.11.12", "2.12.7")
 resolvers += "DynamoDBLocal" at "https://s3-us-west-2.amazonaws.com/dynamodb-local/release"
 
 libraryDependencies += "com.amazonaws" % "aws-java-sdk-dynamodb" % "1.11.325"
+// https://mvnrepository.com/artifact/com.amazonaws/amazon-dax-client
+libraryDependencies += "com.amazonaws" % "amazon-dax-client" % "1.0.200704.0"
 libraryDependencies += "com.amazonaws" % "DynamoDBLocal" % "[1.11,2.0)" % "test"
 
 libraryDependencies += "org.apache.spark" %% "spark-sql" % "2.4.0" % "provided"
@@ -30,9 +32,9 @@ libraryDependencies ++= {
         "org.apache.logging.log4j" % "log4j-slf4j-impl" % log4j2Version % "test"
     )
 }
-
+test in assembly := {}
 fork in Test := true
-javaOptions in Test ++= Seq("-Djava.library.path=./lib/sqlite4java", "-Daws.dynamodb.endpoint=http://localhost:8000")
+javaOptions in Test ++= Seq("-Djava.library.path=./lib/sqlite4java", "-Daws.dynamodb.endpoint=http://localhost:8000" ,"-Daws.accessKeyId=asdf","-Daws.secretKey=asdf")
 
 /**
   * Maven specific settings for publishing to Maven central.

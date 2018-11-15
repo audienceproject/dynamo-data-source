@@ -37,10 +37,9 @@ private[dynamodb] class TableConnector(tableName: String, totalSegments: Int, pa
 
     private val consistentRead = parameters.getOrElse("stronglyConsistentReads", "false").toBoolean
     private val filterPushdown = parameters.getOrElse("filterPushdown", "true").toBoolean
-    private val region = parameters.get("region")
 
     override val (keySchema, readLimit, writeLimit, itemLimit, totalSizeInBytes) = {
-        val table = getDynamoDB(region).getTable(tableName)
+        val table = getDynamoDB(parameters).getTable(tableName)
         val desc = table.describe()
 
         // Key schema.
@@ -83,10 +82,10 @@ private[dynamodb] class TableConnector(tableName: String, totalSegments: Int, pa
             scanSpec.withExpressionSpec(xspec.buildForScan())
         }
 
-        getDynamoDB(region).getTable(tableName).scan(scanSpec)
+        getDynamoDB(parameters).getTable(tableName).scan(scanSpec)
     }
 
-    override def updateItems(schema: StructType)(items: Iterator[Row]): Unit = {
+    override def updateItems(schema: StructType, batchSize: Int)(items: Iterator[Row]): Unit = {
         val columnNames = schema.map(_.name)
         val hashKeyIndex = columnNames.indexOf(keySchema.hashKeyName)
         val rangeKeyIndex = keySchema.rangeKeyName.map(columnNames.indexOf)
@@ -98,32 +97,38 @@ private[dynamodb] class TableConnector(tableName: String, totalSegments: Int, pa
         })
 
         val rateLimiter = RateLimiter.create(writeLimit max 1)
-        val client = getDynamoDBClient(region)
+        val client = getDynamoDBAsyncClient(parameters)
 
 
 
         // For each item.
-        items.foreach(row => {
-            val key:Map[String,AttributeValue] = keySchema match {
-                case KeySchema(hashKey, None) => Map(hashKey ->  mapValueToAttributeValue(row(hashKeyIndex), schema(hashKey).dataType))
-                case KeySchema(hashKey, Some(rangeKey)) =>
-                    Map(hashKey ->  mapValueToAttributeValue(row(hashKeyIndex), schema(hashKey).dataType),
-                        rangeKey-> mapValueToAttributeValue(row(rangeKeyIndex.get), schema(rangeKey).dataType))
+        items.grouped(batchSize).foreach(itemBatch => {
+            val results = itemBatch.map(row => {
+                val key:Map[String,AttributeValue] = keySchema match {
+                    case KeySchema(hashKey, None) => Map(hashKey ->  mapValueToAttributeValue(row(hashKeyIndex), schema(hashKey).dataType))
+                    case KeySchema(hashKey, Some(rangeKey)) =>
+                        Map(hashKey ->  mapValueToAttributeValue(row(hashKeyIndex), schema(hashKey).dataType),
+                            rangeKey-> mapValueToAttributeValue(row(rangeKeyIndex.get), schema(rangeKey).dataType))
 
-            }
-            val nonNullColumnIndices =columnIndices.filter(c => row(c._2)!=null)
-            val updateExpression = s"SET ${nonNullColumnIndices.map(c => s"${c._1}=:${c._1}").mkString(", ")}"
-            val expressionAttributeValues = nonNullColumnIndices.map(c => s":${c._1}" -> mapValueToAttributeValue(row(c._2), schema(c._1).dataType)).toMap.asJava
-            val updateItemReq = new UpdateItemRequest()
-                .withReturnConsumedCapacity(ReturnConsumedCapacity.TOTAL)
-              .withTableName(tableName)
-              .withKey(key.asJava)
-              .withUpdateExpression(updateExpression)
-              .withExpressionAttributeValues(expressionAttributeValues)
+                }
+                val nonNullColumnIndices =columnIndices.filter(c => row(c._2)!=null)
+                val updateExpression = s"SET ${nonNullColumnIndices.map(c => s"#${c._2}=:${c._2}").mkString(", ")}"
+                val expressionAttributeValues = nonNullColumnIndices.map(c => s":${c._2}" -> mapValueToAttributeValue(row(c._2), schema(c._1).dataType)).toMap.asJava
+                val updateItemReq = new UpdateItemRequest()
+                    .withReturnConsumedCapacity(ReturnConsumedCapacity.TOTAL)
+                    .withTableName(tableName)
+                    .withKey(key.asJava)
+                    .withUpdateExpression(updateExpression)
+                    .withExpressionAttributeNames(nonNullColumnIndices.map(c=>s"#${c._2}" -> c._1).toMap.asJava)
+                    .withExpressionAttributeValues(expressionAttributeValues)
 
-            val updateItemResult = client.updateItem(updateItemReq)
-
-            handleUpdateItemResult(rateLimiter)(updateItemResult)
+                client.updateItemAsync(updateItemReq)
+            })
+            val unitsSpent = results.map(f => (try { Option(f.get()) } catch { case _:Exception => Option.empty })
+                .flatMap(c => Option(c.getConsumedCapacity))
+                .map(_.getCapacityUnits)
+                .getOrElse(Double.box(1.0))).reduce((a,b)=>a+b)
+            rateLimiter.acquire(unitsSpent.toInt)
         })
     }
 
@@ -139,7 +144,7 @@ private[dynamodb] class TableConnector(tableName: String, totalSegments: Int, pa
         })
 
         val rateLimiter = RateLimiter.create(writeLimit max 1)
-        val client = getDynamoDB(region)
+        val client = getDynamoDB(parameters)
 
         // For each batch.
         items.grouped(batchSize).foreach(itemBatch => {
@@ -222,13 +227,6 @@ private[dynamodb] class TableConnector(tableName: String, totalSegments: Int, pa
         if (response.getUnprocessedItems != null && !response.getUnprocessedItems.isEmpty) {
             val newResponse = client.batchWriteItemUnprocessed(response.getUnprocessedItems)
             handleBatchWriteResponse(client, rateLimiter)(newResponse)
-        }
-    }
-    private def handleUpdateItemResult(rateLimiter: RateLimiter)
-                                        (result: UpdateItemResult): Unit = {
-        // Rate limit on write capacity.
-        if (result.getConsumedCapacity != null) {
-            rateLimiter.acquire(result.getConsumedCapacity.getCapacityUnits.toInt)
         }
     }
 

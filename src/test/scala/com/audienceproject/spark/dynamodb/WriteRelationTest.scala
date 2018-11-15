@@ -69,7 +69,7 @@ class WriteRelationTest extends AbstractInMemoryTest {
         newItemsDs.write.dynamodb(tablename)
 
         newItemsDs
-            .withColumn("size",length($"color"))
+            .withColumn("si:ze",length($"color"))
             .drop("color")
             .withColumn("weight",$"weight"*2)
             .write.option("update","true").dynamodb(tablename)
@@ -80,7 +80,7 @@ class WriteRelationTest extends AbstractInMemoryTest {
         assert(validationDs.select("name").as[String].collect().forall(Seq("lemon", "orange", "pomegranate") contains _))
         assert(validationDs.select("color").as[String].collect().forall(Seq("yellow", "orange", "red") contains _))
         assert(validationDs.select("weight").as[Double].collect().forall(Seq(0.2, 0.4, 0.4) contains _))
-        assert(validationDs.select("size").as[Long].collect().forall(Seq(6,3) contains _))
+        assert(validationDs.select("si:ze").as[Long].collect().forall(Seq(6,3) contains _))
 
     }
 

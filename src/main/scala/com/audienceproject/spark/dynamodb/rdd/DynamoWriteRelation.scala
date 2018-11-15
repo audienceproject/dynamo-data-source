@@ -45,7 +45,7 @@ private[dynamodb] class DynamoWriteRelation(data: DataFrame, parameters: Map[Str
     }
 
     def update(): Unit = {
-        data.foreachPartition(connector.updateItems(schema) _)
+        data.foreachPartition(connector.updateItems(schema,batchSize) _)
     }
 
 
