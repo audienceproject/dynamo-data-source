@@ -57,10 +57,21 @@ private[dynamodb] class TableConnector(tableName: String, totalSegments: Int, pa
         val readCapacity = desc.getProvisionedThroughput.getReadCapacityUnits * targetCapacity
         val writeCapacity = desc.getProvisionedThroughput.getWriteCapacityUnits * targetCapacity
 
-        val readLimit = readCapacity / totalSegments
+        if (readCapacity > 0) {
+            val readLimit = readCapacity / totalSegments
+        } else {
+            // Assumes on-demand capacity
+            val readLimit = totalSegments
+        }
+        
         val itemLimit = ((bytesPerRCU / avgItemSize * readLimit).toInt * readFactor) max 1
 
-        val writeLimit = writeCapacity / totalSegments
+        if (writeCapacity > 0) {
+            val writeLimit = writeCapacity / totalSegments
+        } else {
+            // Assumes on-demand capacity
+            val writeLimit = totalSegments
+        }
 
         (keySchema, readLimit, writeLimit, itemLimit, tableSize.toLong)
     }
