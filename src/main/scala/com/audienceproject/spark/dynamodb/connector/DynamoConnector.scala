@@ -35,7 +35,7 @@ private[dynamodb] trait DynamoConnector {
     }
 
     def getDynamoDBClient(region: Option[String] = None): AmazonDynamoDB = {
-        val chosenRegion = region.getOrElse(sys.env.getOrElse("aws.dynamodb.region", "us-east-1"))
+        val chosenRegion = region.getOrElse(sys.env.getOrElse("AWS_DYNAMODB_REGION", "us-east-1"))
         Option(System.getProperty("aws.dynamodb.endpoint")).map(endpoint => {
             val credentials = Option(System.getProperty("aws.profile"))
                 .map(new ProfileCredentialsProvider(_))
