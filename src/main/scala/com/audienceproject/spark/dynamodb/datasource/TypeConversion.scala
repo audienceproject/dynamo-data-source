@@ -16,13 +16,15 @@
   * specific language governing permissions and limitations
   * under the License.
   *
-  * Copyright © 2018 AudienceProject. All rights reserved.
+  * Copyright © 2019 AudienceProject. All rights reserved.
   */
-package com.audienceproject.spark.dynamodb.rdd
+package com.audienceproject.spark.dynamodb.datasource
 
 import com.amazonaws.services.dynamodbv2.document.Item
-import org.apache.spark.sql.Row
+import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.util.{ArrayBasedMapData, GenericArrayData}
 import org.apache.spark.sql.types._
+import org.apache.spark.unsafe.types.UTF8String
 
 import scala.collection.JavaConverters._
 
@@ -32,7 +34,7 @@ private[dynamodb] object TypeConversion {
 
         sparkType match {
             case BooleanType => nullableGet(_.getBOOL)(attrName)
-            case StringType => nullableGet(_.getString)(attrName)
+            case StringType => nullableGet(item => attrName => UTF8String.fromString(item.getString(attrName)))(attrName)
             case IntegerType => nullableGet(_.getInt)(attrName)
             case LongType => nullableGet(_.getLong)(attrName)
             case DoubleType => nullableGet(_.getDouble)(attrName)
@@ -49,6 +51,8 @@ private[dynamodb] object TypeConversion {
                 nullableGet(_.getRawMap)(attrName).andThen(extractStruct(nestedConversions))
             case _ => throw new IllegalArgumentException(s"Spark DataType '${sparkType.typeName}' could not be mapped to a corresponding DynamoDB data type.")
         }
+
+    private val stringConverter = (value: Any) => UTF8String.fromString(value.asInstanceOf[String])
 
     private def convertValue(sparkType: DataType): Any => Any =
 
@@ -70,7 +74,7 @@ private[dynamodb] object TypeConversion {
                 case _ => null
             }
             case StringType => {
-                case string: String => string
+                case string: String => UTF8String.fromString(string)
                 case _ => null
             }
             case BinaryType => {
@@ -93,18 +97,18 @@ private[dynamodb] object TypeConversion {
     }
 
     private def extractArray(converter: Any => Any): Any => Any = {
-        case list: java.util.List[_] => list.asScala.map(converter)
-        case set: java.util.Set[_] => set.asScala.map(converter).toSeq
+        case list: java.util.List[_] => new GenericArrayData(list.asScala.map(converter))
+        case set: java.util.Set[_] => new GenericArrayData(set.asScala.map(converter).toSeq)
         case _ => null
     }
 
     private def extractMap(converter: Any => Any): Any => Any = {
-        case map: java.util.Map[_, _] => map.asScala.mapValues(converter)
+        case map: java.util.Map[_, _] => ArrayBasedMapData(map, stringConverter, converter)
         case _ => null
     }
 
     private def extractStruct(conversions: Seq[(String, Any => Any)]): Any => Any = {
-        case map: java.util.Map[_, _] => Row.fromSeq(conversions.map({
+        case map: java.util.Map[_, _] => InternalRow.fromSeq(conversions.map({
             case (name, conv) => conv(map.get(name))
         }))
         case _ => null

@@ -20,7 +20,7 @@
   */
 package com.audienceproject.spark.dynamodb.connector
 
-import com.amazonaws.services.dynamodbv2.xspec.ExpressionSpecBuilder.{N => newN, S => newS, BOOL => newBOOL, _}
+import com.amazonaws.services.dynamodbv2.xspec.ExpressionSpecBuilder.{BOOL => newBOOL, N => newN, S => newS, _}
 import com.amazonaws.services.dynamodbv2.xspec._
 import org.apache.spark.sql.sources._
 
@@ -28,6 +28,23 @@ private[dynamodb] object FilterPushdown {
 
     def apply(filters: Seq[Filter]): Condition =
         filters.map(buildCondition).map(parenthesize).reduce[Condition](_ and _)
+
+    /**
+      * Accepts only filters that would be considered valid input to FilterPushdown.apply()
+      *
+      * @param filters input list which may contain both valid and invalid filters
+      * @return a (valid, invalid) partitioning of the input filters
+      */
+    def acceptFilters(filters: Array[Filter]): (Array[Filter], Array[Filter]) =
+        filters.partition(checkFilter)
+
+    private def checkFilter(filter: Filter): Boolean = filter match {
+        case _: StringEndsWith => false
+        case And(left, right) => checkFilter(left) && checkFilter(right)
+        case Or(left, right) => checkFilter(left) && checkFilter(right)
+        case Not(f) => checkFilter(f)
+        case _ => true
+    }
 
     private def buildCondition(filter: Filter): Condition = filter match {
         case EqualTo(path, value: Boolean) => newBOOL(path).eq(value)

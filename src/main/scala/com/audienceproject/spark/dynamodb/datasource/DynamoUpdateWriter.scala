@@ -16,22 +16,29 @@
   * specific language governing permissions and limitations
   * under the License.
   *
-  * Copyright © 2018 AudienceProject. All rights reserved.
+  * Copyright © 2019 AudienceProject. All rights reserved.
   */
-package com.audienceproject.spark.dynamodb.connector
+package com.audienceproject.spark.dynamodb.datasource
 
 import com.amazonaws.services.dynamodbv2.document.DynamoDB
 import com.audienceproject.com.google.common.util.concurrent.RateLimiter
+import com.audienceproject.spark.dynamodb.connector.{ColumnSchema, TableConnector}
 import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.sources.v2.writer.{DataWriter, WriterCommitMessage}
 
-private[dynamodb] trait DynamoWritable {
+class DynamoUpdateWriter(columnSchema: ColumnSchema,
+                         connector: TableConnector,
+                         client: DynamoDB)
+    extends DataWriter[InternalRow] {
 
-    val writeLimit: Double
+    private val rateLimiter = RateLimiter.create(connector.writeLimit)
 
-    def putItems(columnSchema: ColumnSchema, items: Seq[InternalRow])
-                (client: DynamoDB, rateLimiter: RateLimiter): Unit
+    override def write(record: InternalRow): Unit = {
+        connector.updateItem(columnSchema, record)(client, rateLimiter)
+    }
 
-    def updateItem(columnSchema: ColumnSchema, item: InternalRow)
-                  (client: DynamoDB, rateLimiter: RateLimiter): Unit
+    override def commit(): WriterCommitMessage = new WriterCommitMessage {}
+
+    override def abort(): Unit = {}
 
 }

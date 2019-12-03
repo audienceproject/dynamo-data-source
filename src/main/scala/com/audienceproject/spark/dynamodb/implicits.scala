@@ -53,7 +53,7 @@ object implicits {
         }
 
         private def getDynamoDBSource(tableName: String): DataFrameReader =
-            reader.format("com.audienceproject.spark.dynamodb").option("tableName", tableName)
+            reader.format("com.audienceproject.spark.dynamodb.datasource").option("tableName", tableName)
 
         private def getColumnsAlias(dataFrame: DataFrame): DataFrame = {
             val columnsAlias = dataFrame.schema.collect({
@@ -70,7 +70,7 @@ object implicits {
     implicit class DynamoDBDataFrameWriter[T](writer: DataFrameWriter[T]) {
 
         def dynamodb(tableName: String): Unit =
-            writer.format("com.audienceproject.spark.dynamodb").option("tableName", tableName).save()
+            writer.format("com.audienceproject.spark.dynamodb.datasource").option("tableName", tableName).save()
 
     }
 

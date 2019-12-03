@@ -29,8 +29,9 @@ import scala.collection.JavaConverters._
 class DefaultSourceTest extends AbstractInMemoryTest {
 
     test("Table count is 9") {
-        val count = spark.read.dynamodb("TestFruit").count()
-        assert(count === 9)
+        val count = spark.read.dynamodb("TestFruit")
+        count.show()
+        assert(count.count() === 9)
     }
 
     test("Column sum is 27") {

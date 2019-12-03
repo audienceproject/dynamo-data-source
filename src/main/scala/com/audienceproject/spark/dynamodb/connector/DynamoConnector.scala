@@ -52,6 +52,7 @@ private[dynamodb] trait DynamoConnector {
                 .build()
         )
     }
+
     def getDynamoDBAsyncClient(region: Option[String] = None, roleArn: Option[String] = None): AmazonDynamoDBAsync = {
         val chosenRegion = region.getOrElse(sys.env.getOrElse("aws.dynamodb.region", "us-east-1"))
         val credentials = getCredentials(chosenRegion, roleArn)
@@ -101,7 +102,9 @@ private[dynamodb] trait DynamoConnector {
 
     val itemLimit: Int
 
-    val totalSizeInBytes: Long
+    val totalSegments: Int
+
+    val filterPushdownEnabled: Boolean
 
     def scan(segmentNum: Int, columns: Seq[String], filters: Seq[Filter]): ItemCollection[ScanOutcome]
 

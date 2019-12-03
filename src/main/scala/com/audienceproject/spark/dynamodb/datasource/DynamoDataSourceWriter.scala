@@ -18,18 +18,24 @@
   *
   * Copyright © 2019 AudienceProject. All rights reserved.
   */
-package com.audienceproject.spark.dynamodb.connector
+package com.audienceproject.spark.dynamodb.datasource
 
-import com.amazonaws.services.dynamodbv2.model.{KeySchemaElement, KeyType}
+import com.audienceproject.spark.dynamodb.connector.TableConnector
+import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.sources.v2.writer.{DataSourceWriter, DataWriterFactory, WriterCommitMessage}
+import org.apache.spark.sql.types.StructType
 
-private[dynamodb] case class KeySchema(hashKeyName: String, rangeKeyName: Option[String])
+class DynamoDataSourceWriter(parallelism: Int, parameters: Map[String, String], schema: StructType)
+    extends DataSourceWriter {
 
-private[dynamodb] object KeySchema {
+    private val tableName = parameters("tablename")
+    private val dynamoConnector = new TableConnector(tableName, parallelism, parameters)
 
-    def fromDescription(keySchemaElements: Seq[KeySchemaElement]): KeySchema = {
-        val hashKeyName = keySchemaElements.find(_.getKeyType == KeyType.HASH.toString).get.getAttributeName
-        val rangeKeyName = keySchemaElements.find(_.getKeyType == KeyType.RANGE.toString).map(_.getAttributeName)
-        KeySchema(hashKeyName, rangeKeyName)
-    }
+    override def createWriterFactory(): DataWriterFactory[InternalRow] =
+        new DynamoWriterFactory(dynamoConnector, parameters, schema)
+
+    override def commit(messages: Array[WriterCommitMessage]): Unit = {}
+
+    override def abort(messages: Array[WriterCommitMessage]): Unit = {}
 
 }
