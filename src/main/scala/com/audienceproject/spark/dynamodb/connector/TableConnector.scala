@@ -39,7 +39,7 @@ private[dynamodb] class TableConnector(tableName: String, parallelism: Int, para
     private val filterPushdown = parameters.getOrElse("filterpushdown", "true").toBoolean
     private val region = parameters.get("region")
     private val roleArn = parameters.get("rolearn")
-
+    private val maxRetries = parameters.getOrElse("maxretries", "3").toInt
     override val filterPushdownEnabled: Boolean = filterPushdown
 
     override val (keySchema, readLimit, writeLimit, itemLimit, totalSegments) = {
@@ -54,7 +54,7 @@ private[dynamodb] class TableConnector(tableName: String, parallelism: Int, para
         val maxPartitionBytes = parameters.getOrElse("maxpartitionbytes", "128000000").toInt
         val targetCapacity = parameters.getOrElse("targetcapacity", "1").toDouble
         val readFactor = if (consistentRead) 1 else 2
-
+        val numTasks = parameters.getOrElse("numInputDFPartitions", parallelism.toString).toInt
         // Table parameters.
         val tableSize = desc.getTableSizeBytes
         val itemCount = desc.getItemCount
@@ -66,24 +66,26 @@ private[dynamodb] class TableConnector(tableName: String, parallelism: Int, para
             if (remainder > 0) sizeBased + (parallelism - remainder)
             else sizeBased
         })
-
+        var readCapacity = parameters.getOrElse("absread", "-1").toDouble
+        var writeCapacity = parameters.getOrElse("abswrite", "-1").toDouble
         // Provisioned or on-demand throughput.
-        val readThroughput = parameters.getOrElse("throughput", Option(desc.getProvisionedThroughput.getReadCapacityUnits)
-            .filter(_ > 0).map(_.longValue().toString)
-            .getOrElse("100")).toLong
-        val writeThroughput = parameters.getOrElse("throughput", Option(desc.getProvisionedThroughput.getWriteCapacityUnits)
-            .filter(_ > 0).map(_.longValue().toString)
-            .getOrElse("100")).toLong
-
-        // Rate limit calculation.
-        val avgItemSize = tableSize.toDouble / itemCount
-        val readCapacity = readThroughput * targetCapacity
-        val writeCapacity = writeThroughput * targetCapacity
-
+        if(readCapacity < 0) {
+            val readThroughput = parameters.getOrElse("throughput", Option(desc.getProvisionedThroughput.getReadCapacityUnits)
+                .filter(_ > 0).map(_.longValue().toString)
+                .getOrElse("100")).toLong
+            readCapacity = readThroughput * targetCapacity
+        }
+        if(writeCapacity < 0) {
+            val writeThroughput = parameters.getOrElse("throughput", Option(desc.getProvisionedThroughput.getWriteCapacityUnits)
+                .filter(_ > 0).map(_.longValue().toString)
+                .getOrElse("100")).toLong
+            // Rate limit calculation.
+            writeCapacity = writeThroughput * targetCapacity
+        }
+        val writeLimit = writeCapacity / numTasks
         val readLimit = readCapacity / parallelism
+        val avgItemSize = tableSize.toDouble / itemCount
         val itemLimit = ((bytesPerRCU / avgItemSize * readLimit).toInt * readFactor) max 1
-
-        val writeLimit = writeCapacity / parallelism
 
         (keySchema, readLimit, writeLimit, itemLimit, numPartitions)
     }
@@ -114,7 +116,7 @@ private[dynamodb] class TableConnector(tableName: String, parallelism: Int, para
         // For each batch.
         val batchWriteItemSpec = new BatchWriteItemSpec().withReturnConsumedCapacity(ReturnConsumedCapacity.TOTAL)
         batchWriteItemSpec.withTableWriteItems(new TableWriteItems(tableName).withItemsToPut(
-            // Map the items.
+            // Map the items
             items.map(row => {
                 val item = new Item()
 
@@ -140,7 +142,7 @@ private[dynamodb] class TableConnector(tableName: String, parallelism: Int, para
         ))
 
         val response = client.batchWriteItem(batchWriteItemSpec)
-        handleBatchWriteResponse(client, rateLimiter)(response)
+        handleBatchWriteResponse(client, rateLimiter)(response, 0)
     }
 
     override def updateItem(columnSchema: ColumnSchema, row: InternalRow)
@@ -196,12 +198,12 @@ private[dynamodb] class TableConnector(tableName: String, parallelism: Int, para
         batchWriteItemSpec.withTableWriteItems(tableWriteItemsWithItems)
 
         val response = client.batchWriteItem(batchWriteItemSpec)
-        handleBatchWriteResponse(client, rateLimiter)(response)
+        handleBatchWriteResponse(client, rateLimiter)(response, 0)
     }
 
     @tailrec
     private def handleBatchWriteResponse(client: DynamoDB, rateLimiter: RateLimiter)
-                                        (response: BatchWriteItemOutcome): Unit = {
+                                        (response: BatchWriteItemOutcome, retries: Int): Unit = {
         // Rate limit on write capacity.
         if (response.getBatchWriteItemResult.getConsumedCapacity != null) {
             response.getBatchWriteItemResult.getConsumedCapacity.asScala.map(cap => {
@@ -209,9 +211,9 @@ private[dynamodb] class TableConnector(tableName: String, parallelism: Int, para
             }).toMap.get(tableName).foreach(units => rateLimiter.acquire(units max 1))
         }
         // Retry unprocessed items.
-        if (response.getUnprocessedItems != null && !response.getUnprocessedItems.isEmpty) {
+        if (response.getUnprocessedItems != null && !response.getUnprocessedItems.isEmpty && retries< maxRetries) {
             val newResponse = client.batchWriteItemUnprocessed(response.getUnprocessedItems)
-            handleBatchWriteResponse(client, rateLimiter)(newResponse)
+            handleBatchWriteResponse(client, rateLimiter)(newResponse, retries+1)
         }
     }
 
