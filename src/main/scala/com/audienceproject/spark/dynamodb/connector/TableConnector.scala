@@ -54,7 +54,7 @@ private[dynamodb] class TableConnector(tableName: String, parallelism: Int, para
         val maxPartitionBytes = parameters.getOrElse("maxpartitionbytes", "128000000").toInt
         val targetCapacity = parameters.getOrElse("targetcapacity", "1").toDouble
         val readFactor = if (consistentRead) 1 else 2
-        val numTasks = parameters.getOrElse("numInputDFPartitions", parallelism.toString).toInt
+        val numTasks = parameters.getOrElse("numinputdfpartitions", parallelism.toString).toInt
         // Table parameters.
         val tableSize = desc.getTableSizeBytes
         val itemCount = desc.getItemCount
