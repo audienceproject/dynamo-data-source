@@ -28,6 +28,7 @@ import com.audienceproject.shaded.google.common.util.concurrent.RateLimiter
 import com.audienceproject.spark.dynamodb.catalyst.JavaConverter
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.sources.Filter
+import org.slf4j.LoggerFactory
 
 import scala.annotation.tailrec
 import scala.collection.JavaConverters._
@@ -41,7 +42,7 @@ private[dynamodb] class TableConnector(tableName: String, parallelism: Int, para
     private val roleArn = parameters.get("rolearn")
     private val maxRetries = parameters.getOrElse("maxretries", "3").toInt
     override val filterPushdownEnabled: Boolean = filterPushdown
-
+    private val logger = LoggerFactory.getLogger(this.getClass)
     override val (keySchema, readLimit, writeLimit, itemLimit, totalSegments) = {
         val table = getDynamoDB(region, roleArn).getTable(tableName)
         val desc = table.describe()
@@ -116,7 +117,7 @@ private[dynamodb] class TableConnector(tableName: String, parallelism: Int, para
         // For each batch.
         val batchWriteItemSpec = new BatchWriteItemSpec().withReturnConsumedCapacity(ReturnConsumedCapacity.TOTAL)
         batchWriteItemSpec.withTableWriteItems(new TableWriteItems(tableName).withItemsToPut(
-            // Map the items
+            // Map the items.
             items.map(row => {
                 val item = new Item()
 
@@ -211,9 +212,20 @@ private[dynamodb] class TableConnector(tableName: String, parallelism: Int, para
             }).toMap.get(tableName).foreach(units => rateLimiter.acquire(units max 1))
         }
         // Retry unprocessed items.
-        if (response.getUnprocessedItems != null && !response.getUnprocessedItems.isEmpty && retries< maxRetries) {
-            val newResponse = client.batchWriteItemUnprocessed(response.getUnprocessedItems)
-            handleBatchWriteResponse(client, rateLimiter)(newResponse, retries+1)
+        if (response.getUnprocessedItems != null && !response.getUnprocessedItems.isEmpty) {
+            if (retries < maxRetries) {
+                val newResponse = client.batchWriteItemUnprocessed(response.getUnprocessedItems)
+                handleBatchWriteResponse(client, rateLimiter)(newResponse, retries + 1)
+            }
+            else{
+                val unprocessed = response.getUnprocessedItems
+                unprocessed.asScala.foreach(keyValue =>
+                    logger.info("Maximum retiries reached while writing items to the DynamoDB." +
+                                "Number of unprocessed items of table \"" + keyValue._1 +"\" = " +
+                                keyValue._2.asScala.length)
+                )
+
+            }
         }
     }
 
