@@ -55,6 +55,9 @@ private[dynamodb] class TableConnector(tableName: String, parallelism: Int, para
         val maxPartitionBytes = parameters.getOrElse("maxpartitionbytes", "128000000").toInt
         val targetCapacity = parameters.getOrElse("targetcapacity", "1").toDouble
         val readFactor = if (consistentRead) 1 else 2
+        //Write parallelisation parameter. depends on number of input partitions the Data Frame is distributed in.
+        //This can be passed by using numInputDFPartitions option.
+        //By default it is chosen tobe spark's default parallelism
         val numTasks = parameters.getOrElse("numinputdfpartitions", parallelism.toString).toInt
         // Table parameters.
         val tableSize = desc.getTableSizeBytes
@@ -83,6 +86,7 @@ private[dynamodb] class TableConnector(tableName: String, parallelism: Int, para
             // Rate limit calculation.
             writeCapacity = writeThroughput * targetCapacity
         }
+        //Calculating write limit for each task, based on number of parallel tasks, target capacity, and WCU limit
         val writeLimit = writeCapacity / numTasks
         val readLimit = readCapacity / parallelism
         val avgItemSize = tableSize.toDouble / itemCount
@@ -213,12 +217,14 @@ private[dynamodb] class TableConnector(tableName: String, parallelism: Int, para
         }
         // Retry unprocessed items.
         if (response.getUnprocessedItems != null && !response.getUnprocessedItems.isEmpty) {
+            println("Unprocessed items found")
             if (retries < maxRetries) {
                 val newResponse = client.batchWriteItemUnprocessed(response.getUnprocessedItems)
                 handleBatchWriteResponse(client, rateLimiter)(newResponse, retries + 1)
             }
             else{
                 val unprocessed = response.getUnprocessedItems
+                //logging about unprocessed items
                 unprocessed.asScala.foreach(keyValue =>
                     logger.info("Maximum retiries reached while writing items to the DynamoDB." +
                                 "Number of unprocessed items of table \"" + keyValue._1 +"\" = " +
