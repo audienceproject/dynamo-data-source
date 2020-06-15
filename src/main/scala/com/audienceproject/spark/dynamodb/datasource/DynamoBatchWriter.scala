@@ -36,7 +36,6 @@ class DynamoBatchWriter(batchSize: Int,
 
     protected val buffer: ArrayBuffer[InternalRow] = new ArrayBuffer[InternalRow](batchSize)
     protected val rateLimiter: RateLimiter = RateLimiter.create(connector.writeLimit)
-
     override def write(record: InternalRow): Unit = {
         buffer += record.copy()
         if (buffer.size == batchSize) {
