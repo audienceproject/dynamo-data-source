@@ -70,9 +70,10 @@ private[dynamodb] class TableConnector(tableName: String, parallelism: Int, para
             if (remainder > 0) sizeBased + (parallelism - remainder)
             else sizeBased
         })
+        //If information about absolute throughput is provided
         var readCapacity = parameters.getOrElse("absread", "-1").toDouble
         var writeCapacity = parameters.getOrElse("abswrite", "-1").toDouble
-        // Provisioned or on-demand throughput.
+        // Else
         if(readCapacity < 0) {
             val readThroughput = parameters.getOrElse("throughput", Option(desc.getProvisionedThroughput.getReadCapacityUnits)
                 .filter(_ > 0).map(_.longValue().toString)
