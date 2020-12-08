@@ -32,14 +32,14 @@ import scala.reflect.runtime.{universe => ru}
   */
 private[dynamodb] object SchemaAnalysis {
 
-    def apply[T <: Product : ClassTag : ru.TypeTag]: StructType = {
+    def apply[T <: Product : ClassTag : ru.TypeTag]: (StructType, Map[String, String]) = {
 
         val runtimeMirror = ru.runtimeMirror(getClass.getClassLoader)
 
         val classObj = scala.reflect.classTag[T].runtimeClass
         val classSymbol = runtimeMirror.classSymbol(classObj)
 
-        val sparkFields = classSymbol.primaryConstructor.typeSignature.paramLists.head.map(field => {
+        val sparkFieldsWithAliasMap = classSymbol.primaryConstructor.typeSignature.paramLists.head.map(field => {
             val sparkType = ScalaReflection.schemaFor(field.typeSignature).dataType
 
             // Black magic from here:
@@ -52,14 +52,13 @@ private[dynamodb] object SchemaAnalysis {
             }).flatten
 
             if (attrName.isDefined) {
-                val metadata = new MetadataBuilder().putString("alias", field.name.toString).build()
-                StructField(attrName.get, sparkType, nullable = true, metadata)
+                (StructField(attrName.get, sparkType, nullable = true), Option(attrName.get -> field.name.toString))
             } else {
-                StructField(field.name.toString, sparkType, nullable = true, Metadata.empty)
+                (StructField(field.name.toString, sparkType, nullable = true), Option.empty)
             }
         })
 
-        StructType(sparkFields)
+        (StructType(sparkFieldsWithAliasMap.map(_._1)), sparkFieldsWithAliasMap.map(_._2).filter(_.isDefined).map(_.get).toMap)
 
     }
 
