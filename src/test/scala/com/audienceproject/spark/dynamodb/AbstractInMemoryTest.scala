@@ -58,14 +58,21 @@ class AbstractInMemoryTest extends FunSuite with BeforeAndAfterAll {
         // Populate with test data.
         val table = dynamoDB.getTable("TestFruit")
         for ((name, color, weight) <- Seq(
-            ("apple", "red", 0.2), ("banana", "yellow", 0.15), ("watermelon", "red", 0.5),
-            ("grape", "green", 0.01), ("pear", "green", 0.2), ("kiwi", "green", 0.05),
-            ("blackberry", "purple", 0.01), ("blueberry", "purple", 0.01), ("plum", "purple", 0.1)
+            ("apple", "red", 0.2),
+            ("banana", "yellow", 0.15),
+            ("watermelon", "red", 0.5),
+            ("grape", "green", 0.01),
+            ("pear", "green", 0.2),
+            ("kiwi", "green", 0.05),
+            ("blackberry", "purple", 0.01),
+            ("blueberry", "blue", 0.01),
+            ("raspberry", "red", 0.05),
+            ("plum", "purple", 0.1)
         )) {
             table.putItem(new Item()
                 .withString("name", name)
                 .withString("color", color)
-                .withDouble("weightKg", weight))
+                .withDouble("weight_kg", weight))
         }
     }
 

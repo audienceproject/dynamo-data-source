@@ -28,39 +28,39 @@ import scala.collection.JavaConverters._
 
 class DefaultSourceTest extends AbstractInMemoryTest {
 
-    test("Table count is 9") {
+    test("Table count is 10") {
         val count = spark.read.dynamodb("TestFruit")
         count.show()
-        assert(count.count() === 9)
+        assert(count.count() === 10)
     }
 
-    test("Column sum is 27") {
+    test("Column sum is 30") {
         val result = spark.read.dynamodb("TestFruit").collectAsList().asScala
         val numCols = result.map(_.length).sum
-        assert(numCols === 27)
+        assert(numCols === 30)
     }
 
-    test("Select only first two columns") {
+    test("Select only first two columns is 20") {
         val result = spark.read.dynamodb("TestFruit").select("name", "color").collectAsList().asScala
         val numCols = result.map(_.length).sum
-        assert(numCols === 18)
+        assert(numCols === 20)
     }
 
-    test("The least occurring color is yellow") {
+    test("The least occurring color is blue") {
         import spark.implicits._
         val itemWithLeastOccurringColor = spark.read.dynamodb("TestFruit")
             .groupBy($"color").agg(count($"color").as("countColor"))
             .orderBy($"countColor")
             .takeAsList(1).get(0)
-        assert(itemWithLeastOccurringColor.getAs[String]("color") === "yellow")
+        assert(itemWithLeastOccurringColor.getAs[String]("color") === "blue")
     }
 
     test("Test of attribute name alias") {
         import spark.implicits._
         val itemApple = spark.read.dynamodbAs[TestFruit]("TestFruit")
-            .filter($"primaryKey" === "apple")
+            .filter($"weightKg" gt 0.01)
             .takeAsList(1).get(0)
-        assert(itemApple.primaryKey === "apple")
+        assert(itemApple.primaryKey === "raspberry")
     }
 
 }
