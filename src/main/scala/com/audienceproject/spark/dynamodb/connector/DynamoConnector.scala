@@ -45,10 +45,17 @@ private[dynamodb] trait DynamoConnector {
         val credentials = getCredentials(chosenRegion, roleArn, providerClassName)
 
         properties.get("aws.dynamodb.endpoint").map(endpoint => {
-            AmazonDynamoDBClientBuilder.standard()
-                .withCredentials(credentials)
-                .withEndpointConfiguration(new EndpointConfiguration(endpoint, chosenRegion))
-                .build()
+            // No need for credentials if using local DynamoDB instance.
+            if (endpoint.startsWith("http://localhost:")) {
+                AmazonDynamoDBClientBuilder.standard()
+                  .withEndpointConfiguration(new EndpointConfiguration(endpoint, chosenRegion))
+                  .build()
+            } else {
+                AmazonDynamoDBClientBuilder.standard()
+                    .withCredentials(credentials)
+                    .withEndpointConfiguration(new EndpointConfiguration(endpoint, chosenRegion))
+                    .build()
+            }
         }).getOrElse(
             AmazonDynamoDBClientBuilder.standard()
                 .withCredentials(credentials)
