@@ -32,6 +32,12 @@ import org.apache.spark.sql.sources.Filter
 import scala.annotation.tailrec
 import scala.collection.JavaConverters._
 
+/**
+ *
+ * @param tableName
+ * @param parallelism
+ * @param parameters case sensitive Map, all keys have been lowercased
+ */
 private[dynamodb] class TableConnector(tableName: String, parallelism: Int, parameters: Map[String, String])
     extends DynamoConnector with DynamoWritable with Serializable {
 
@@ -43,8 +49,10 @@ private[dynamodb] class TableConnector(tableName: String, parallelism: Int, para
 
     override val filterPushdownEnabled: Boolean = filterPushdown
 
+    override val daxEndpoint: String = parameters.getOrElse("daxendpoint", "").trim
+
     override val (keySchema, readLimit, writeLimit, itemLimit, totalSegments) = {
-        val table = getDynamoDB(region, roleArn, providerClassName).getTable(tableName)
+        val table = getDynamoDB(region, roleArn, providerClassName, omitDax = true).getTable(tableName)
         val desc = table.describe()
 
         // Key schema.

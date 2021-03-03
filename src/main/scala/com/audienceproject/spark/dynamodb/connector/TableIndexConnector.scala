@@ -39,6 +39,8 @@ private[dynamodb] class TableIndexConnector(tableName: String, indexName: String
 
     override val filterPushdownEnabled: Boolean = filterPushdown
 
+    override val daxEndpoint: String = parameters.getOrElse("daxendpoint", "").trim
+
     override val (keySchema, readLimit, itemLimit, totalSegments) = {
         val table = getDynamoDB(region, roleArn, providerClassName).getTable(tableName)
         val indexDesc = table.describe().getGlobalSecondaryIndexes.asScala.find(_.getIndexName == indexName).get

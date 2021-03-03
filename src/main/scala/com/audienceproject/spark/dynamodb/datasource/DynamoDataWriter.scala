@@ -51,7 +51,10 @@ class DynamoDataWriter(batchSize: Int,
 
     override def abort(): Unit = {}
 
-    override def close(): Unit = client.shutdown()
+    override def close(): Unit = {
+        buffer.clear()
+        client.shutdown()
+    }
 
     protected def flush(): Unit = {
         if (buffer.nonEmpty) {

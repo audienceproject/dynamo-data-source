@@ -2,18 +2,30 @@ organization := "com.audienceproject"
 
 name := "spark-dynamodb"
 
-version := "1.1.3"
+version := "1.1.3-SNAPSHOT"
 
 description := "Plug-and-play implementation of an Apache Spark custom data source for AWS DynamoDB."
 
 scalaVersion := "2.12.12"
 
+javacOptions ++= Seq("-source", "1.8", "-target", "1.8")
+scalacOptions += "-target:jvm-1.8"
+
+initialize := {
+    val _ = initialize.value
+    val required = "1.8"
+    val current  = sys.props("java.specification.version")
+    assert(current == required, s"Unsupported JDK: java.specification.version $current != $required")
+}
+
 compileOrder := CompileOrder.JavaThenScala
 
 resolvers += "DynamoDBLocal" at "https://s3-us-west-2.amazonaws.com/dynamodb-local/release"
 
-libraryDependencies += "com.amazonaws" % "aws-java-sdk-sts" % "1.11.678"
-libraryDependencies += "com.amazonaws" % "aws-java-sdk-dynamodb" % "1.11.678"
+libraryDependencies += "com.amazonaws" % "aws-java-sdk-sts" % "1.11.955"
+libraryDependencies += "com.amazonaws" % "aws-java-sdk-dynamodb" % "1.11.955"
+// This should be "optional" scope after updating SBT to a version that supports it
+libraryDependencies += "com.amazonaws" % "amazon-dax-client" % "1.0.208233.0"
 libraryDependencies += "com.amazonaws" % "DynamoDBLocal" % "[1.11,2.0)" % "test" exclude("com.google.guava", "guava")
 
 libraryDependencies += "org.apache.spark" %% "spark-sql" % "3.0.0" % "provided"

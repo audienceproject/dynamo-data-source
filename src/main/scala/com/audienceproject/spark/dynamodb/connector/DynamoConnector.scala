@@ -20,6 +20,9 @@
   */
 package com.audienceproject.spark.dynamodb.connector
 
+import java.net.URI
+
+import com.amazon.dax.client.dynamodbv2.{AmazonDaxAsyncClientBuilder, AmazonDaxClientBuilder}
 import com.amazonaws.auth.profile.ProfileCredentialsProvider
 import com.amazonaws.auth.{AWSCredentialsProvider, AWSStaticCredentialsProvider, BasicSessionCredentials, DefaultAWSCredentialsProviderChain}
 import com.amazonaws.client.builder.AwsClientBuilder.EndpointConfiguration
@@ -28,52 +31,79 @@ import com.amazonaws.services.dynamodbv2.{AmazonDynamoDB, AmazonDynamoDBAsync, A
 import com.amazonaws.services.securitytoken.AWSSecurityTokenServiceClientBuilder
 import com.amazonaws.services.securitytoken.model.AssumeRoleRequest
 import org.apache.spark.sql.sources.Filter
+import org.slf4j.LoggerFactory
 
 private[dynamodb] trait DynamoConnector {
+    private val logger = LoggerFactory.getLogger(this.getClass)
 
     @transient private lazy val properties = sys.props
 
-    def getDynamoDB(region: Option[String] = None, roleArn: Option[String] = None, providerClassName: Option[String] = None): DynamoDB = {
-        val client: AmazonDynamoDB = getDynamoDBClient(region, roleArn, providerClassName)
+    def getDynamoDB(region: Option[String] = None, roleArn: Option[String] = None,
+                    providerClassName: Option[String] = None, omitDax: Boolean = false): DynamoDB = {
+        val client: AmazonDynamoDB = getDynamoDBClient(region, roleArn, providerClassName, omitDax)
         new DynamoDB(client)
     }
 
     private def getDynamoDBClient(region: Option[String] = None,
                                   roleArn: Option[String] = None,
-                                  providerClassName: Option[String]): AmazonDynamoDB = {
+                                  providerClassName: Option[String],
+                                  omitDax: Boolean = false): AmazonDynamoDB = {
         val chosenRegion = region.getOrElse(properties.getOrElse("aws.dynamodb.region", "us-east-1"))
         val credentials = getCredentials(chosenRegion, roleArn, providerClassName)
 
-        properties.get("aws.dynamodb.endpoint").map(endpoint => {
-            AmazonDynamoDBClientBuilder.standard()
-                .withCredentials(credentials)
-                .withEndpointConfiguration(new EndpointConfiguration(endpoint, chosenRegion))
-                .build()
-        }).getOrElse(
-            AmazonDynamoDBClientBuilder.standard()
+        if (omitDax || daxEndpoint.isEmpty) {
+            logger.info("NOT using DAX")
+            properties.get("aws.dynamodb.endpoint").map(endpoint => {
+                logger.debug(s"Using DynamoDB endpoint ${endpoint}")
+                AmazonDynamoDBClientBuilder.standard()
+                    .withCredentials(credentials)
+                    .withEndpointConfiguration(new EndpointConfiguration(endpoint, chosenRegion))
+                    .build()
+            }).getOrElse(
+                AmazonDynamoDBClientBuilder.standard()
+                    .withCredentials(credentials)
+                    .withRegion(chosenRegion)
+                    .build()
+            )
+        } else {
+            logger.debug(s"Using DAX endpoint ${daxEndpoint}")
+            AmazonDaxClientBuilder.standard()
+                .withEndpointConfiguration(daxEndpoint)
                 .withCredentials(credentials)
                 .withRegion(chosenRegion)
                 .build()
-        )
+        }
+
     }
 
     def getDynamoDBAsyncClient(region: Option[String] = None,
                                roleArn: Option[String] = None,
-                               providerClassName: Option[String] = None): AmazonDynamoDBAsync = {
+                               providerClassName: Option[String] = None,
+                               omitDax: Boolean = false): AmazonDynamoDBAsync = {
         val chosenRegion = region.getOrElse(properties.getOrElse("aws.dynamodb.region", "us-east-1"))
         val credentials = getCredentials(chosenRegion, roleArn, providerClassName)
 
-        properties.get("aws.dynamodb.endpoint").map(endpoint => {
-            AmazonDynamoDBAsyncClientBuilder.standard()
-                .withCredentials(credentials)
-                .withEndpointConfiguration(new EndpointConfiguration(endpoint, chosenRegion))
-                .build()
-        }).getOrElse(
-            AmazonDynamoDBAsyncClientBuilder.standard()
+        if (omitDax || daxEndpoint.isEmpty) {
+            properties.get("aws.dynamodb.endpoint").map(endpoint => {
+                logger.debug(s"Using DynamoDB endpoint ${endpoint}")
+                AmazonDynamoDBAsyncClientBuilder.standard()
+                    .withCredentials(credentials)
+                    .withEndpointConfiguration(new EndpointConfiguration(endpoint, chosenRegion))
+                    .build()
+            }).getOrElse(
+                AmazonDynamoDBAsyncClientBuilder.standard()
+                    .withCredentials(credentials)
+                    .withRegion(chosenRegion)
+                    .build()
+            )
+        } else {
+            logger.debug(s"Using DAX endpoint ${daxEndpoint}")
+            AmazonDaxAsyncClientBuilder.standard()
+                .withEndpointConfiguration(daxEndpoint)
                 .withCredentials(credentials)
                 .withRegion(chosenRegion)
                 .build()
-        )
+        }
     }
 
     /**
@@ -125,6 +155,8 @@ private[dynamodb] trait DynamoConnector {
     val totalSegments: Int
 
     val filterPushdownEnabled: Boolean
+
+    val daxEndpoint: String
 
     def scan(segmentNum: Int, columns: Seq[String], filters: Seq[Filter]): ItemCollection[ScanOutcome]
 

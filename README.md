@@ -62,6 +62,7 @@ val avgWeightByColor = vegetableDs.agg($"color", avg($"weightKg")) // The column
 ```python
 # Load a DataFrame from a Dynamo table. Only incurs the cost of a single scan for schema inference.
 dynamoDf = spark.read.option("tableName", "SomeTableName") \
+                     .mode(SaveMode.Append) \
                      .format("dynamodb") \
                      .load() # <-- DataFrame of Row objects with inferred schema.
 
@@ -70,6 +71,7 @@ dynamoDf.show(100)
 
 # write to some other table overwriting existing item with same keys
 dynamoDf.write.option("tableName", "SomeOtherTable") \
+              .mode(SaveMode.Append) \
               .format("dynamodb") \
               .save()
 ```
@@ -83,25 +85,35 @@ pyspark --packages com.audienceproject:spark-dynamodb_<spark-scala-version>:<ver
 The following parameters can be set as options on the Spark reader and writer object before loading/saving.
 - `region` sets the region where the dynamodb table. Default is environment specific.
 - `roleArn` sets an IAM role to assume. This allows for access to a DynamoDB in a different account than the Spark cluster. Defaults to the standard role configuration.
+- `daxEndpoint` if not blank, reads and writes will interact with the provided DAX cluster endpoint instead of DynamoDB
+directly. Default is empty string.
 
 The following parameters can be set as options on the Spark reader object before loading.
 
 - `readPartitions` number of partitions to split the initial RDD when loading the data into Spark. Defaults to the size of the DynamoDB table divided into chunks of `maxPartitionBytes`
 - `maxPartitionBytes` the maximum size of a single input partition. Default 128 MB
-- `defaultParallelism` the number of input partitions that can be read from DynamoDB simultaneously. Defaults to `sparkContext.defaultParallelism`
-- `targetCapacity` fraction of provisioned read capacity on the table (or index) to consume for reading. Default 1 (i.e. 100% capacity).
+- `defaultParallelism` the number of input partitions that can be read from or written to DynamoDB simultaneously.
+Read/write throughput will be limited by dividing it by this number. Set this to the number of CPU cores in your
+Spark job. Defaults to the value of `SparkContext#defaultParallelism`.
+- `targetCapacity` fraction of provisioned read capacity on the table (or index) to consume for reading, enforced by
+a rate limiter. Default 1 (i.e. 100% capacity).
 - `stronglyConsistentReads` whether or not to use strongly consistent reads. Default false.
 - `bytesPerRCU` number of bytes that can be read per second with a single Read Capacity Unit. Default 4000 (4 KB). This value is multiplied by two when `stronglyConsistentReads=false`
 - `filterPushdown` whether or not to use filter pushdown to DynamoDB on scan requests. Default true.
 - `throughput` the desired read throughput to use. It overwrites any calculation used by the package. It is intended to be used with tables that are on-demand. Defaults to 100 for on-demand.
 
-The following parameters can be set as options on the Spark writer object before saving.
+The following parameters can be set as options on the Spark writer object before saving. By default, items will be
+written using PutItem grouped into BatchWriteItem operations.
 
 - `writeBatchSize` number of items to send per call to DynamoDB BatchWriteItem. Default 25.
-- `targetCapacity` fraction of provisioned write capacity on the table to consume for writing or updating. Default 1 (i.e. 100% capacity).
-- `update` if true items will be written using UpdateItem on keys rather than BatchWriteItem. Default false.
+- `targetCapacity` fraction of provisioned write capacity on the table to consume for writing or updating, enforced
+by a rate limiter. Default 1 (i.e. 100% capacity).
+- `update` if true, items will be written using UpdateItem on keys rather than BatchWriteItem. Default false.
+- `delete` if true, items will be deleted using BatchWriteItem. Default false.
 - `throughput` the desired write throughput to use. It overwrites any calculation used by the package. It is intended to be used with tables that are on-demand. Defaults to 100 for on-demand.
-- `inferSchema` if false will not automatically infer schema - this is useful when writing to a table with many columns
+- `inferSchema` Requires permission to use "Scan" on the table. If no items are present in the table, the inferred
+schema will be empty. If false, will not automatically infer schema - this is useful when writing to a table with
+many columns. Default true.
 
 ## System Properties
 The following Java system properties are available for configuration.
