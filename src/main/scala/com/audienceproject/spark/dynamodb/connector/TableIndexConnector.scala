@@ -65,7 +65,7 @@ private[dynamodb] class TableIndexConnector(tableName: String, indexName: String
         })
 
         // Provisioned or on-demand throughput.
-        val readThroughput = parameters.getOrElse("throughput", Option(indexDesc.getProvisionedThroughput.getReadCapacityUnits)
+        val readThroughput = parameters.getOrElse("readThroughput", Option(indexDesc.getProvisionedThroughput.getReadCapacityUnits)
             .filter(_ > 0).map(_.longValue().toString)
             .getOrElse("100")).toLong
 

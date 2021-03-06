@@ -22,7 +22,7 @@ package com.audienceproject.spark.dynamodb.connector
 
 import com.amazonaws.services.dynamodbv2.document._
 import com.amazonaws.services.dynamodbv2.document.spec.{BatchWriteItemSpec, ScanSpec, UpdateItemSpec}
-import com.amazonaws.services.dynamodbv2.model.ReturnConsumedCapacity
+import com.amazonaws.services.dynamodbv2.model.{ProvisionedThroughputDescription, ReturnConsumedCapacity}
 import com.amazonaws.services.dynamodbv2.xspec.ExpressionSpecBuilder
 import com.audienceproject.shaded.google.common.util.concurrent.RateLimiter
 import com.audienceproject.spark.dynamodb.catalyst.JavaConverter
@@ -68,13 +68,18 @@ private[dynamodb] class TableConnector(tableName: String, parallelism: Int, para
             else sizeBased
         })
 
+        def readThroughputParam(paramName: String, fallback: ProvisionedThroughputDescription => Long) =
+            parameters.getOrElse(paramName,
+                // fallback to old throughput name to preserve backwards compatibility
+                parameters.getOrElse("throughput",
+                    Option(fallback(desc.getProvisionedThroughput).longValue())
+                        .filter(_ > 0).map(_.toString).getOrElse("100")
+                )
+            ).toLong
+
         // Provisioned or on-demand throughput.
-        val readThroughput = parameters.getOrElse("throughput", Option(desc.getProvisionedThroughput.getReadCapacityUnits)
-            .filter(_ > 0).map(_.longValue().toString)
-            .getOrElse("100")).toLong
-        val writeThroughput = parameters.getOrElse("throughput", Option(desc.getProvisionedThroughput.getWriteCapacityUnits)
-            .filter(_ > 0).map(_.longValue().toString)
-            .getOrElse("100")).toLong
+        val readThroughput = readThroughputParam("readThroughput", _.getReadCapacityUnits)
+        val writeThroughput = readThroughputParam("writeThroughput", _.getWriteCapacityUnits)
 
         // Rate limit calculation.
         val avgItemSize = tableSize.toDouble / itemCount
